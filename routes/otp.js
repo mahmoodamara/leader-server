@@ -9,23 +9,27 @@ const {
   TWILIO_SMS_FROM,
   TWILIO_MESSAGING_SERVICE_SID,
   TWILIO_STATUS_CALLBACK,
-  OTP_BRAND = "Salon Jihad",
+  OTP_BRAND = "LEADER BARBERSHOP",
   OTP_TTL_MINUTES = "5",
+  // NEW: SMS mode -> 'otp-only' | 'all' | 'none'
+  SMS_MODE = "otp-only",
 } = process.env;
 
-if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
+// نحتاج بيانات Twilio عندما نتوقع إرسال فعلي
+const maySendAnySMS = SMS_MODE === "all" || SMS_MODE === "otp-only";
+if (maySendAnySMS && (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN)) {
   throw new Error("Twilio credentials are missing in .env");
 }
-if (!TWILIO_SMS_FROM && !TWILIO_MESSAGING_SERVICE_SID) {
+if (maySendAnySMS && !TWILIO_SMS_FROM && !TWILIO_MESSAGING_SERVICE_SID) {
   console.warn("⚠️ Set TWILIO_SMS_FROM or TWILIO_MESSAGING_SERVICE_SID in .env");
 }
 
-const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+const client =
+  maySendAnySMS && TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN
+    ? twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    : null;
 
-/* ========= In-Memory Store =========
-   phone -> { hash, expiresAt, attempts, firstAttemptAt, lastSentAt }
-   ملاحظة: استبدل هذا بمخزن دائم (Redis مثلاً) في الإنتاج.
-==================================== */
+/* ========= In-Memory Store ========= */
 const otpStore = new Map();
 
 /* ========= Helpers ========= */
@@ -40,19 +44,16 @@ function normalizeDigits(s = "") {
 }
 
 // تحويل الرقم إلى E.164 (IL)
-// يدعم: +9725XXXXXXXX | 05XXXXXXXX | 9725XXXXXXXX
 function toE164(phone) {
   let p = normalizeDigits(phone || "").trim().replace(/[\s\-\(\)]/g, "");
   if (!p) throw new Error("Phone is required");
-
   if (p.startsWith("+")) return p;                    // +9725XXXXXXXX
   if (/^9725\d{8}$/.test(p)) return "+" + p;          // 9725XXXXXXXX
   if (/^0\d{9}$/.test(p)) return "+972" + p.slice(1); // 05XXXXXXXX
-
   throw new Error("Invalid phone format. Use +9725XXXXXXXX or local 05XXXXXXXX");
 }
 
-// Hash OTP (avoid storing in plain text)
+// Hash OTP
 function hashCode(code) {
   return crypto.createHash("sha256").update(String(code)).digest("hex");
 }
@@ -62,7 +63,7 @@ function generateOTP() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// Simple throttle (per phone): min interval 30s between sends, max 5 attempts/hour
+// Simple throttle
 function canSend(phone) {
   const now = Date.now();
   const entry = otpStore.get(phone);
@@ -71,30 +72,51 @@ function canSend(phone) {
   if (entry.lastSentAt && now - entry.lastSentAt < 30 * 1000) {
     const wait = Math.ceil((30 * 1000 - (now - entry.lastSentAt)) / 1000);
     return { ok: false, reason: `Please wait ${wait}s before requesting another OTP.` };
-  }
+    }
 
   const hourAgo = now - 60 * 60 * 1000;
-  // إذا انتهت نافذة الساعة، صفّر العداد
   if (!entry.firstAttemptAt || entry.firstAttemptAt < hourAgo) {
     entry.attempts = 0;
     entry.firstAttemptAt = now;
     otpStore.set(phone, entry);
     return { ok: true };
   }
-
   if ((entry.attempts || 0) >= 5) {
     return { ok: false, reason: "Too many OTP requests in the last hour. Please try later." };
   }
   return { ok: true };
 }
 
-async function sendSMS({ to, body }) {
+/* ====== NEW: Policy to decide if we actually send SMS ====== */
+function shouldSendSMS(routeKey /* 'send-otp' | 'send-confirmation' | ... */) {
+  if (SMS_MODE === "all") return true;
+  if (SMS_MODE === "none") return false;
+  // otp-only
+  return routeKey === "send-otp";
+}
+
+/* ====== NEW: Unified sender that mocks when disabled ====== */
+async function sendSMSUnified(routeKey, { to, body }) {
+  const willSend = shouldSendSMS(routeKey);
+
   const msgOptions = {
     to,
     body,
-    validityPeriod: Number(OTP_TTL_MINUTES) * 60, // يسقط بعد مدة الـ OTP
+    validityPeriod: Number(OTP_TTL_MINUTES) * 60,
   };
 
+  if (!willSend) {
+    // Mock response – لا ترسل شيء فعليًا
+    return {
+      sid: `mock_${routeKey}_${Date.now()}`,
+      status: "mocked",
+      to,
+      bodyPreview: body.slice(0, 30),
+      mode: SMS_MODE,
+    };
+  }
+
+  // إرسال فعلي
   if (TWILIO_MESSAGING_SERVICE_SID) {
     msgOptions.messagingServiceSid = TWILIO_MESSAGING_SERVICE_SID;
   } else if (TWILIO_SMS_FROM) {
@@ -102,17 +124,14 @@ async function sendSMS({ to, body }) {
   } else {
     throw new Error("Please set TWILIO_SMS_FROM or TWILIO_MESSAGING_SERVICE_SID in .env");
   }
-
-  if (TWILIO_STATUS_CALLBACK) {
-    msgOptions.statusCallback = TWILIO_STATUS_CALLBACK;
-  }
+  if (TWILIO_STATUS_CALLBACK) msgOptions.statusCallback = TWILIO_STATUS_CALLBACK;
 
   return client.messages.create(msgOptions);
 }
 
 /* ========= Routes ========= */
 
-// إرسال OTP عبر SMS
+// إرسال OTP عبر SMS (فعليًا فقط هنا)
 router.post("/send-otp", async (req, res) => {
   try {
     let { phone } = req.body;
@@ -127,7 +146,7 @@ router.post("/send-otp", async (req, res) => {
     const expiresAt = Date.now() + Number(OTP_TTL_MINUTES) * 60 * 1000;
     const body = `[${OTP_BRAND}] كود التحقق: ${code}. صالح ${OTP_TTL_MINUTES} دقائق. لا تشاركه مع أحد.`;
 
-    const resp = await sendSMS({ to, body });
+    const resp = await sendSMSUnified("send-otp", { to, body });
 
     const prev = otpStore.get(to) || {};
     const now = Date.now();
@@ -140,13 +159,15 @@ router.post("/send-otp", async (req, res) => {
     });
 
     return res.status(200).json({
-      message: "OTP sent via SMS",
+      message: shouldSendSMS("send-otp") ? "OTP sent via SMS" : "OTP generated (SMS disabled)",
       sid: resp.sid,
-      status: resp.status, // accepted/queued...
+      status: resp.status, // accepted/queued/mocked
+      // للتطوير: يمكن إرجاع الكود عند SMS_MODE==='none' فقط لو أردت (احذف إن لا تريد كشفه)
+      // devCode: SMS_MODE === 'none' ? code : undefined,
     });
   } catch (error) {
     return res.status(500).json({
-      message: "Failed to send OTP via SMS",
+      message: "Failed to process send-otp",
       error: error.message,
       code: error.code || undefined,
       moreInfo: error.moreInfo || undefined,
@@ -154,7 +175,7 @@ router.post("/send-otp", async (req, res) => {
   }
 });
 
-// التحقق من الـ OTP
+// التحقق من الـ OTP (بدون SMS أساسًا)
 router.post("/verify-otp", (req, res) => {
   try {
     let { phone, code } = req.body;
@@ -184,7 +205,7 @@ router.post("/verify-otp", (req, res) => {
   }
 });
 
-// إرسال رسالة تأكيد الحجز عبر SMS
+// إرسال رسالة تأكيد الحجز عبر SMS (Mock إلا إذا SMS_MODE='all')
 router.post("/send-confirmation", async (req, res) => {
   try {
     let { phone, customerName, barberName, services, date, time } = req.body;
@@ -202,16 +223,18 @@ router.post("/send-confirmation", async (req, res) => {
 🕒 الساعة: ${time}
 📍 ${OTP_BRAND} – شكرًا لحجزك!`;
 
-    const resp = await sendSMS({ to, body });
+    const resp = await sendSMSUnified("send-confirmation", { to, body });
 
     return res.status(200).json({
-      message: "تم إرسال رسالة التأكيد عبر SMS",
+      message: shouldSendSMS("send-confirmation")
+        ? "تم إرسال رسالة التأكيد عبر SMS"
+        : "تمت معالجة التأكيد (SMS معطل في هذا المسار)",
       sid: resp.sid,
-      status: resp.status,
+      status: resp.status, // mocked عندما يكون الإرسال معطل
     });
   } catch (error) {
     return res.status(500).json({
-      message: "Failed to send confirmation SMS",
+      message: "Failed to process confirmation",
       error: error.message,
       code: error.code || undefined,
       moreInfo: error.moreInfo || undefined,
@@ -219,15 +242,18 @@ router.post("/send-confirmation", async (req, res) => {
   }
 });
 
-/* ===== Debug: جلب حالة رسالة عبر SID ===== */
+/* ===== Debug: جلب حالة رسالة عبر SID (يعمل فقط للمرسلة فعليًا) ===== */
 router.get("/status/:sid", async (req, res) => {
   try {
+    if (!client) {
+      return res.status(400).json({ message: "Twilio client disabled in this SMS_MODE" });
+    }
     const m = await client.messages(req.params.sid).fetch();
     res.json({
       sid: m.sid,
       to: m.to,
       from: m.from,
-      status: m.status,        // queued/sending/sent/delivered/undelivered/failed
+      status: m.status,
       errorCode: m.errorCode,
       errorMessage: m.errorMessage,
       dateCreated: m.dateCreated,
