@@ -2,7 +2,23 @@ const express = require('express');
 const router = express.Router();
 const Booking = require('../models/Booking');
 const Barber = require('../models/Barber');
+// const moment = require('moment'); // غير مستخدم
 const { generateTimeSlots } = require('../utils/slots');
+
+const twilio = require('twilio');
+const {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_SMS_FROM,               // رقم Twilio للإرسال (اختياري إذا لديك MG)
+  TWILIO_MESSAGING_SERVICE_SID,  // Messaging Service SID (MG...) إن وُجد
+  TWILIO_STATUS_CALLBACK,        // اختياري: Webhook لحالات الرسالة
+} = process.env;
+
+if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
+  throw new Error('Twilio credentials are missing in .env');
+}
+
+const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
 
 /* ---------------- Helpers (E.164) ---------------- */
 
@@ -29,9 +45,22 @@ function toE164IL(phone) {
   throw new Error('Invalid phone format. Use +9725XXXXXXXX or local 05XXXXXXXX');
 }
 
+async function sendSMS({ to, body }) {
+  const msg = { to, body };
+  if (TWILIO_MESSAGING_SERVICE_SID) {
+    msg.messagingServiceSid = TWILIO_MESSAGING_SERVICE_SID;
+  } else if (TWILIO_SMS_FROM) {
+    msg.from = TWILIO_SMS_FROM;
+  } else {
+    throw new Error('Please set TWILIO_MESSAGING_SERVICE_SID or TWILIO_SMS_FROM in .env');
+  }
+  if (TWILIO_STATUS_CALLBACK) msg.statusCallback = TWILIO_STATUS_CALLBACK;
+  return client.messages.create(msg);
+}
+
 /* ---------------- Routes ---------------- */
 
-// 1) إنشاء حجز
+// 1) إنشاء حجز + إرسال SMS تأكيد
 router.post('/', async (req, res) => {
   const { barberId, serviceIds, customerName, phone, date, time } = req.body;
 
@@ -44,7 +73,7 @@ router.post('/', async (req, res) => {
     if (exists) return res.status(400).json({ message: 'هذا الموعد محجوز بالفعل' });
 
     // حوّل الرقم وخزّنه بصيغة E.164 لضمان الاستعلامات لاحقًا
-    const phoneE164 = toE164IL(phone);
+    const phoneE164 = toE164IL("0506540110");
 
     const newBooking = await Booking.create({
       barberId,
@@ -55,12 +84,29 @@ router.post('/', async (req, res) => {
       time,
     });
 
-    res.status(201).json({
-      message: 'تم إنشاء الحجز بنجاح',
-      booking: newBooking
-    });
+    // اسم الحلاق
+    const barber = await Barber.findById(barberId);
+    const barberName = barber ? barber.name : 'غير معروف';
+
+    // أسماء الخدمات
+    const populated = await Booking.populate(newBooking, { path: 'serviceIds' });
+    const serviceNames = (populated.serviceIds || []).map(s => s.name).join(' + ');
+
+    // نص الرسالة
+    const messageBody = `✅ تم تأكيد الحجز بنجاح!
+
+👤 الاسم: ${customerName}
+✂️ الحلاق: ${barberName}
+🧾 الخدمة: ${serviceNames}
+📅 التاريخ: ${new Date(date).toLocaleDateString('ar-EG')}
+🕒 الساعة: ${time}`;
+
+    // إرسال SMS
+    await sendSMS({ to: phoneE164, body: messageBody });
+
+    res.status(201).json(newBooking);
   } catch (err) {
-    console.error('❌ Booking creation error:', err);
+    console.error('❌ Booking creation or SMS error:', err);
     res.status(500).json({ message: 'Booking creation failed', error: err.message });
   }
 });
