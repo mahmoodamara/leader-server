@@ -9,7 +9,7 @@ const {
   TWILIO_SMS_FROM,
   TWILIO_MESSAGING_SERVICE_SID,
   TWILIO_STATUS_CALLBACK,
-  OTP_BRAND = "LEADER BARBERSHOP",
+  OTP_BRAND = "LEADER",
   OTP_TTL_MINUTES = "5",
   // NEW: SMS mode -> 'otp-only' | 'all' | 'none'
   SMS_MODE = "otp-only",
@@ -144,7 +144,7 @@ router.post("/send-otp", async (req, res) => {
 
     const code = generateOTP();
     const expiresAt = Date.now() + Number(OTP_TTL_MINUTES) * 60 * 1000;
-    const body = `[${OTP_BRAND}] كود التحقق: ${code}. صالح ${OTP_TTL_MINUTES} دقائق. لا تشاركه مع أحد.`;
+const body = `كود التحقق من ${OTP_BRAND}: ${code}\nصالح لمدة ${OTP_TTL_MINUTES} دقائق.\n⚠️ لا تشاركه مع أحد.`;
 
     const resp = await sendSMSUnified("send-otp", { to, body });
 
