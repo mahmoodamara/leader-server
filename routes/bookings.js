@@ -61,55 +61,56 @@ async function sendSMS({ to, body }) {
 /* ---------------- Routes ---------------- */
 
 // 1) إنشاء حجز + إرسال SMS تأكيد
-router.post('/', async (req, res) => {
+import { sendEmail } from "../utils/email.js";
+
+router.post("/", async (req, res) => {
   const { barberId, serviceIds, customerName, phone, date, time } = req.body;
 
-  if (!barberId || !Array.isArray(serviceIds) || serviceIds.length === 0 || !customerName || !phone || !date || !time)
-    return res.status(400).json({ message: 'Missing required fields' });
+  if (!barberId || !Array.isArray(serviceIds) || serviceIds.length === 0 || !customerName || !phone || !date || !time) {
+    return res.status(400).json({ message: "Missing required fields" });
+  }
 
   try {
-    // لا يوجد تضارب
     const exists = await Booking.findOne({ barberId, date, time });
-    if (exists) return res.status(400).json({ message: 'هذا الموعد محجوز بالفعل' });
-
-    // حوّل الرقم وخزّنه بصيغة E.164 لضمان الاستعلامات لاحقًا
-    const phoneE164 = toE164IL("0506540110");
+    if (exists) return res.status(400).json({ message: "هذا الموعد محجوز بالفعل" });
 
     const newBooking = await Booking.create({
       barberId,
       serviceIds,
       customerName,
-      phone: phoneE164,
+      phone,
       date,
       time,
     });
 
-    // اسم الحلاق
     const barber = await Barber.findById(barberId);
-    const barberName = barber ? barber.name : 'غير معروف';
+    const barberName = barber ? barber.name : "غير معروف";
 
-    // أسماء الخدمات
-    const populated = await Booking.populate(newBooking, { path: 'serviceIds' });
-    const serviceNames = (populated.serviceIds || []).map(s => s.name).join(' + ');
+    const populated = await Booking.populate(newBooking, { path: "serviceIds" });
+    const serviceNames = (populated.serviceIds || []).map(s => s.name).join(" + ");
 
-    // نص الرسالة
-    const messageBody = `✅ تم تأكيد الحجز بنجاح!
+    const messageBody = `📩 حجز جديد:
 
 👤 الاسم: ${customerName}
+📞 الهاتف: ${phone}
 ✂️ الحلاق: ${barberName}
 🧾 الخدمة: ${serviceNames}
-📅 التاريخ: ${new Date(date).toLocaleDateString('ar-EG')}
+📅 التاريخ: ${new Date(date).toLocaleDateString("ar-EG")}
 🕒 الساعة: ${time}`;
 
-    // إرسال SMS
-    await sendSMS({ to: phoneE164, body: messageBody });
+    // إرسال ايميل إلى الايميل الثابت
+    await sendEmail({
+      subject: "📌 حجز جديد - صالون جهاد",
+      body: messageBody,
+    });
 
     res.status(201).json(newBooking);
   } catch (err) {
-    console.error('❌ Booking creation or SMS error:', err);
-    res.status(500).json({ message: 'Booking creation failed', error: err.message });
+    console.error("❌ Booking creation or Email error:", err);
+    res.status(500).json({ message: "Booking creation failed", error: err.message });
   }
 });
+
 
 // 2) جلب حجوزات مستخدم
 // GET /api/bookings?phone=+972545828034  (يفضّل تمرير الرقم بصيغة E.164)
