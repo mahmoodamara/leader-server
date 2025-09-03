@@ -58,8 +58,41 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// ✅ Get available slots for a specific day & date
 
+// ✅ Update working hours for a specific day
+router.put('/:id/working-hours', async (req, res) => {
+  const { day, intervals } = req.body;
+  // مثال: { day: "Sunday", intervals: [ { from: "10:00", to: "14:00" }, { from: "16:00", to: "20:00" } ] }
+
+  if (!day || !Array.isArray(intervals)) {
+    return res.status(400).json({ message: 'Day and intervals are required' });
+  }
+
+  try {
+    const barber = await Barber.findById(req.params.id);
+    if (!barber) {
+      return res.status(404).json({ message: 'Barber not found' });
+    }
+
+    // ✅ تحقق من صيغة الساعات
+    for (const interval of intervals) {
+      if (!/^\d{2}:\d{2}$/.test(interval.from) || !/^\d{2}:\d{2}$/.test(interval.to)) {
+        return res.status(400).json({ message: 'Invalid time format, must be HH:MM' });
+      }
+    }
+
+    // ✅ تحديث ساعات اليوم المطلوب
+    barber.workingHours.set(day, intervals);
+
+    await barber.save();
+    res.json({
+      message: `Working hours updated for ${day}`,
+      workingHours: { [day]: barber.workingHours.get(day) }
+    });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to update working hours', error: err.message });
+  }
+});
 
 
 router.get('/:id/available-slots', async (req, res) => {
