@@ -1,7 +1,9 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const Booking = require('../models/Booking');
-const Barber = require('../models/Barber');
+const Booking = require("../models/Booking");
+const Barber = require("../models/Barber");
+const { sendEmail } = require("../utils/email"); // 👈 import يتحول لـ require
+
 // const moment = require('moment'); // غير مستخدم
 const { generateTimeSlots } = require('../utils/slots');
 
@@ -61,7 +63,6 @@ async function sendSMS({ to, body }) {
 /* ---------------- Routes ---------------- */
 
 // 1) إنشاء حجز + إرسال SMS تأكيد
-import { sendEmail } from "../utils/email.js";
 
 router.post("/", async (req, res) => {
   const { barberId, serviceIds, customerName, phone, date, time } = req.body;
