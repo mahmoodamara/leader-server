@@ -12,7 +12,7 @@ const transporter = nodemailer.createTransport({
 async function sendEmail({ subject, body }) {
   await transporter.sendMail({
     from: `"صالون جهاد" <${process.env.EMAIL_USER}>`,
-    to: "mostafajehad8@gmail.com", // ايميل ثابت
+    to: "leaderbarbershop66@gmail.com", // ايميل ثابت
     subject,
     text: body,
     html: `<pre>${body}</pre>`,
