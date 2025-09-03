@@ -144,7 +144,7 @@ router.post("/send-otp", async (req, res) => {
 
     const code = generateOTP();
     const expiresAt = Date.now() + Number(OTP_TTL_MINUTES) * 60 * 1000;
-const body = `كود التحقق من ${OTP_BRAND}: ${code}\nصالح لمدة ${OTP_TTL_MINUTES} دقائق.\n⚠️ لا تشاركه مع أحد.`;
+const body = `[${OTP_BRAND}] كودك: ${code}\nصالح ${OTP_TTL_MINUTES} د.\n⚠️ لا تشاركه.`;
 
     const resp = await sendSMSUnified("send-otp", { to, body });
 
