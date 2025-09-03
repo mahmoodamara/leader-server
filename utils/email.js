@@ -17,3 +17,4 @@ export async function sendEmail({ subject, body }) {
     html: `<pre>${body}</pre>`,
   });
 }
+module.exports = { sendEmail };
