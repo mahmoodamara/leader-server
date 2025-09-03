@@ -86,6 +86,8 @@ router.post("/", async (req, res) => {
 
     const barber = await Barber.findById(barberId);
     const barberName = barber ? barber.name : "غير معروف";
+        const phoneE1641 = toE164IL(phone);
+
 
     const populated = await Booking.populate(newBooking, { path: "serviceIds" });
     const serviceNames = (populated.serviceIds || []).map(s => s.name).join(" + ");
@@ -93,7 +95,7 @@ router.post("/", async (req, res) => {
     const messageBody = `📩 حجز جديد:
 
 👤 الاسم: ${customerName}
-📞 الهاتف: ${phone}
+📞 الهاتف: ${phoneE1641}
 ✂️ الحلاق: ${barberName}
 🧾 الخدمة: ${serviceNames}
 📅 التاريخ: ${new Date(date).toLocaleDateString("ar-EG")}
