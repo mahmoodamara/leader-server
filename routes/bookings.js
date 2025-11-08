@@ -2,27 +2,10 @@ const express = require("express");
 const router = express.Router();
 const Booking = require("../models/Booking");
 const Barber = require("../models/Barber");
-const { sendEmail } = require("../utils/email"); // 👈 import يتحول لـ require
+const { sendEmail } = require("../utils/email");
+const { generateTimeSlots } = require("../utils/slots");
 
-// const moment = require('moment'); // غير مستخدم
-const { generateTimeSlots } = require('../utils/slots');
-
-const twilio = require('twilio');
-const {
-  TWILIO_ACCOUNT_SID,
-  TWILIO_AUTH_TOKEN,
-  TWILIO_SMS_FROM,               // رقم Twilio للإرسال (اختياري إذا لديك MG)
-  TWILIO_MESSAGING_SERVICE_SID,  // Messaging Service SID (MG...) إن وُجد
-  TWILIO_STATUS_CALLBACK,        // اختياري: Webhook لحالات الرسالة
-} = process.env;
-
-if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN) {
-  throw new Error('Twilio credentials are missing in .env');
-}
-
-const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-
-/* ---------------- Helpers (E.164) ---------------- */
+/* ---------------- Helpers ---------------- */
 
 // تحويل أرقام عربية/فارسية إلى لاتينية
 function normalizeDigits(s = '') {
@@ -40,30 +23,16 @@ function toE164IL(phone) {
   let p = normalizeDigits(phone || '').trim().replace(/[\s\-()]/g, '');
   if (!p) throw new Error('Phone is required');
 
-  if (p.startsWith('+')) return p;                // +9725XXXXXXXX
-  if (/^9725\d{8}$/.test(p)) return '+' + p;      // 9725XXXXXXXX
-  if (/^0\d{9}$/.test(p)) return '+972' + p.slice(1); // 05XXXXXXXX
+  if (p.startsWith('+')) return p;
+  if (/^9725\d{8}$/.test(p)) return '+' + p;
+  if (/^0\d{9}$/.test(p)) return '+972' + p.slice(1);
 
-  throw new Error('Invalid phone format. Use +9725XXXXXXXX or local 05XXXXXXXX');
-}
-
-async function sendSMS({ to, body }) {
-  const msg = { to, body };
-  if (TWILIO_MESSAGING_SERVICE_SID) {
-    msg.messagingServiceSid = TWILIO_MESSAGING_SERVICE_SID;
-  } else if (TWILIO_SMS_FROM) {
-    msg.from = TWILIO_SMS_FROM;
-  } else {
-    throw new Error('Please set TWILIO_MESSAGING_SERVICE_SID or TWILIO_SMS_FROM in .env');
-  }
-  if (TWILIO_STATUS_CALLBACK) msg.statusCallback = TWILIO_STATUS_CALLBACK;
-  return client.messages.create(msg);
+  throw new Error('Invalid phone format. Use +9725XXXXXXXX or 05XXXXXXXX');
 }
 
 /* ---------------- Routes ---------------- */
 
-// 1) إنشاء حجز + إرسال SMS تأكيد
-
+// 1) إنشاء حجز + إرسال بريد تأكيد
 router.post("/", async (req, res) => {
   const { barberId, serviceIds, customerName, phone, date, time } = req.body;
 
@@ -86,8 +55,7 @@ router.post("/", async (req, res) => {
 
     const barber = await Barber.findById(barberId);
     const barberName = barber ? barber.name : "غير معروف";
-        const phoneE1641 = toE164IL(phone);
-
+    const phoneE164 = toE164IL(phone);
 
     const populated = await Booking.populate(newBooking, { path: "serviceIds" });
     const serviceNames = (populated.serviceIds || []).map(s => s.name).join(" + ");
@@ -95,7 +63,7 @@ router.post("/", async (req, res) => {
     const messageBody = `📩 حجز جديد:
 
 👤 الاسم: ${customerName}
-📞 الهاتف: ${phoneE1641}
+📞 الهاتف: ${phoneE164}
 ✂️ الحلاق: ${barberName}
 🧾 الخدمة: ${serviceNames}
 📅 التاريخ: ${new Date(date).toLocaleDateString("ar-EG")}
@@ -114,11 +82,7 @@ router.post("/", async (req, res) => {
   }
 });
 
-
 // 2) جلب حجوزات مستخدم
-// GET /api/bookings?phone=+972545828034  (يفضّل تمرير الرقم بصيغة E.164)
-
-// تاريخ+وقت -> ms للفرز/التصفية
 function toMs(b) {
   const [y, m, d] = String(b.date).split('-').map(Number);
   const [hh, mm] = String(b.time || '00:00').split(':').map(Number);
@@ -130,14 +94,13 @@ router.get('/', async (req, res) => {
   if (!phone) return res.status(400).json({ message: 'Phone is required' });
 
   try {
-    // 1) جهّز القيم المحتملة للبحث (E.164 + المحلي إن كان valid)
     const phoneE164 = toE164IL(phone);
     const local = normalizeDigits(phone).trim().replace(/[\s\-()]/g, '');
     const candidates = [phoneE164];
-    if (/^0\d{9}$/.test(local)) candidates.push(local);        // للحجوزات القديمة المخزنة محليًا
-    if (/^9725\d{8}$/.test(local)) candidates.push('+' + local); // لو جتك 972... بدون +
 
-    // 2) استعلم بــ $in + فرز مبدئي (كنصي) يفيد لأن date=YYYY-MM-DD و time=HH:mm
+    if (/^0\d{9}$/.test(local)) candidates.push(local);
+    if (/^9725\d{8}$/.test(local)) candidates.push('+' + local);
+
     let bookings = await Booking.find({ phone: { $in: candidates } })
       .populate('barberId', 'name photoUrl')
       .populate('serviceIds', 'name price')
@@ -147,7 +110,6 @@ router.get('/', async (req, res) => {
         createdAt: sort === 'desc' ? -1 : 1,
       });
 
-    // 3) (اختياري) رجّع القادم فقط
     if (onlyUpcoming === 'true') {
       const now = Date.now();
       bookings = bookings.filter(b => toMs(b) >= now);
@@ -191,15 +153,11 @@ router.put('/:id', async (req, res) => {
     });
     if (conflict) return res.status(400).json({ message: 'هذا الموعد محجوز' });
 
-    // تحديث
     booking.date = date;
     booking.time = time;
     await booking.save();
 
-    res.json({ 
-      message: 'تم تعديل الحجز بنجاح', 
-      booking 
-    });
+    res.json({ message: 'تم تعديل الحجز بنجاح', booking });
   } catch (err) {
     console.error('❌ Error in update:', err);
     res.status(500).json({ message: 'Booking update failed', error: err.message });
@@ -213,7 +171,6 @@ router.delete('/:id', async (req, res) => {
     if (!booking) return res.status(404).json({ message: 'لم يتم العثور على الحجز' });
 
     await booking.deleteOne();
-
     res.json({ message: 'تم حذف الحجز بنجاح' });
   } catch (err) {
     console.error('❌ خطأ أثناء الحذف:', err);
@@ -249,7 +206,6 @@ router.get('/:id/available-slots', async (req, res) => {
 });
 
 // 6) حجوزات حلاق بتاريخ معيّن
-// GET /api/bookings/barber/:barberId?date=2025-06-01
 router.get('/barber/:barberId', async (req, res) => {
   const { barberId } = req.params;
   const { date } = req.query;
@@ -259,7 +215,7 @@ router.get('/barber/:barberId', async (req, res) => {
   try {
     const bookings = await Booking.find({
       barberId,
-      date: { $regex: `^${date}` }, // يبدأ بـ YYYY-MM-DD
+      date: { $regex: `^${date}` },
     }).populate('serviceIds', 'name price');
 
     res.json(bookings);

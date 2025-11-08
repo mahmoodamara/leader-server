@@ -58,19 +58,7 @@ function getLanIP() {
   return null;
 }
 
-const twilio = require("twilio");
-const client = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
 
-(async () => {
-  const list = await client.messaging.v1
-    .services("MG9219b4ea2617744814a75aa180ccdca9")
-    .phoneNumbers.list({ limit: 50 });
-  const hasNumber = list.some((n) => n.phoneNumber === "+972533624275");
-  console.log("In Sender Pool?", hasNumber);
-})();
 
 app.listen(PORT, HOST, () => {
   const lan = getLanIP();
