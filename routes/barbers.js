@@ -74,6 +74,10 @@ router.put('/:id/working-hours', async (req, res) => {
       return res.status(404).json({ message: 'Barber not found' });
     }
 
+    if (!(barber.workingHours instanceof Map)) {
+      barber.workingHours = new Map(Object.entries(barber.workingHours || {}));
+    }
+
     // ✅ تحقق من صيغة الساعات
     for (const interval of intervals) {
       if (!/^\d{2}:\d{2}$/.test(interval.from) || !/^\d{2}:\d{2}$/.test(interval.to)) {
@@ -107,8 +111,12 @@ router.get('/:id/available-slots', async (req, res) => {
       if (!barber) {
         return res.status(404).json({ message: 'Barber not found' });
       }
-  
-      const intervals = barber.workingHours.get(day); // ✅ Map accessor
+
+      const workingHours = barber.workingHours instanceof Map
+        ? barber.workingHours
+        : new Map(Object.entries(barber.workingHours || {}));
+
+      const intervals = workingHours.get(day);
   
       if (!Array.isArray(intervals) || intervals.length === 0) {
         return res.status(200).json({ slots: [] });

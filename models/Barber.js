@@ -22,6 +22,7 @@ const BarberSchema = new Schema({
   workingHours: {
     type: Map,
     of: [WorkingHourSchema], // مثال: { Sunday: [ { from, to }, ... ] }
+    default: () => new Map(),
   },
 }, { timestamps: true });
 
