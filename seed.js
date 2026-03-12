@@ -43,6 +43,28 @@ const barber = new Barber({
     Saturday:  [{ from: "12:00", to: "21:00" }]
   }
 });
+const barber2 = new Barber({
+  name: 'هادي',
+  photoUrl: 'https://randomuser.me/api/portraits/men/45.jpg',
+  serviceIds: services.map(s => s._id),
+  rating: 4.6,
+  experience: '3 سنوات خبرة',
+  city: 'كفركنا',
+  startingPrice: 50,
+  nextAvailability: 'الثلاثاء 9:00 ص',
+  isAvailable: true,
+  workingHours: {
+    Sunday: [],
+    Monday: [],
+    Tuesday: [{ from: "09:00", to: "17:00" }],
+    Wednesday: [],
+    Thursday: [],
+    Friday: [],
+    Saturday: []
+  }
+});
+
+await barber2.save();
 
 
   await barber.save();

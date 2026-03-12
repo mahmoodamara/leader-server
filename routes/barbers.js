@@ -2,7 +2,20 @@ const express = require('express');
 const router = express.Router();
 const Barber = require('../models/Barber');
 const Booking = require('../models/Booking');
+const Service = require('../models/Service');
 const {generateTimeSlots} = require('../utils/slots');
+
+function buildDefaultWorkingHours() {
+  return {
+    Sunday: [],
+    Monday: [],
+    Tuesday: [{ from: '09:00', to: '17:00' }],
+    Wednesday: [],
+    Thursday: [],
+    Friday: [],
+    Saturday: [],
+  };
+}
 
 // ✅ Get all barbers
 router.get('/', async (req, res) => {
@@ -28,7 +41,29 @@ router.get('/:id', async (req, res) => {
 // ✅ Create new barber
 router.post('/', async (req, res) => {
   try {
-    const newBarber = new Barber(req.body);
+    const allServices = await Service.find({}, '_id');
+    const defaultBarberData = {
+      photoUrl: 'https://randomuser.me/api/portraits/men/45.jpg',
+      serviceIds: allServices.map((service) => service._id),
+      rating: 4.6,
+      experience: '3 سنوات خبرة',
+      city: 'كفركنا',
+      startingPrice: 50,
+      nextAvailability: 'الثلاثاء 9:00 ص',
+      isAvailable: true,
+      workingHours: buildDefaultWorkingHours(),
+    };
+
+    const payload = {
+      ...defaultBarberData,
+      ...req.body,
+      serviceIds: Array.isArray(req.body.serviceIds) && req.body.serviceIds.length > 0
+        ? req.body.serviceIds
+        : defaultBarberData.serviceIds,
+      workingHours: req.body.workingHours || defaultBarberData.workingHours,
+    };
+
+    const newBarber = new Barber(payload);
     const saved = await newBarber.save();
     res.status(201).json(saved);
   } catch (err) {
